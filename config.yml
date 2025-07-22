@@ -1,0 +1,51 @@
+version: 1
+validation: sovereign
+default_denom: uGNODI
+accounts: 
+- name: alice
+  coins:
+  - 20000token
+  - 200000000uGNODI
+- name: bob
+  coins:
+  - 10000token
+  - 100000000uGNODI
+- name: mintingAddr
+  coins:
+  - 100000000uGNODI
+  mnemonic: tilt steel wet bottom afraid return thrive wrestle camera bitter tape pretty
+- name: receivingAddr
+  coins:
+  - 100000000uGNODI
+  mnemonic: security betray arrow group lonely language tube now deer sting silk nothing
+client:
+  openapi:
+    path: docs/static/openapi.json
+faucet:
+  name: bob
+  coins:
+  - 5token
+  - 100000stake
+validators:
+- name: alice
+  bonded: 100000000uGNODI
+- name: validator1
+  bonded: 200000000uGNODI
+- name: validator2
+  bonded: 100000000uGNODI
+genesis:
+  app_state:
+    distro:
+      params:
+        minting_address: "gnodi1dz90dnylax5fvn9wzhrfln2ha73nehzvvr3hyz"
+        receiving_address: "gnodi123rrlkgu8syvxwflyk7nr8yclhwh07et20jlsm"
+        denom: "uGNODI"
+        max_supply: 30000000000000000
+        distribution_start_date: "2025-07-01"
+        months_in_halving_period: 12
+    wasm:
+      params:
+        code_upload_access:
+          addresses: []
+          permission: "Everybody"
+        instantiate_default_permission: "Everybody"

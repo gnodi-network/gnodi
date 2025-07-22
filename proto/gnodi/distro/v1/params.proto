@@ -1,0 +1,20 @@
+syntax = "proto3";
+
+package gnodi.distro.v1;
+
+import "amino/amino.proto";
+import "gogoproto/gogo.proto";
+
+option go_package = "gnodi/x/distro/types";
+
+// Params defines the parameters for the module.
+message Params {
+  option (amino.name) = "gnodi/x/distro/Params";
+  option (gogoproto.equal) = true;
+  string minting_address = 1;
+  string receiving_address = 2;
+  string denom = 3;
+  uint64 max_supply = 4;
+  string distribution_start_date = 5;
+  uint64 months_in_halving_period = 6;
+}
