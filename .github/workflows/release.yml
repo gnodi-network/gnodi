@@ -1,0 +1,103 @@
+name: Build And Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version to build (e.g., 1.0.0)'
+        required: true
+        default: '0.0.0'
+      create_release:
+        description: 'Create GitHub release'
+        required: false
+        default: 'false'
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      with:
+        fetch-depth: 0  # Fetch all history for git describe
+
+    - name: Set up Go
+      uses: actions/setup-go@v4
+      with:
+        go-version: '1.24.5'
+        cache: true
+
+    - name: Install dependencies
+      run: |
+        go mod download
+        go mod verify
+
+    - name: Build Linux binary
+      env:
+        VERSION: ${{ github.event.inputs.version }}
+      run: |
+        make build-linux VERSION=$VERSION
+        ls -la build/
+
+    - name: Upload binary artifact
+      uses: actions/upload-artifact@v4
+      with:
+        name: gnodid-linux-${{ github.event.inputs.version }}
+        path: build/gnodid-linux
+        retention-days: 30
+
+    - name: Show binary info
+      run: |
+        echo "Binary size:"
+        ls -lh build/gnodid-linux
+        echo "Binary version info:"
+        ./build/gnodid-linux version
+
+  release:
+    needs: build
+    if: github.event.inputs.create_release == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      with:
+        fetch-depth: 0
+
+    - name: Download binary artifact
+      uses: actions/download-artifact@v4
+      with:
+        name: gnodid-linux-${{ github.event.inputs.version }}
+        path: build/
+
+    - name: Create Release
+      uses: softprops/action-gh-release@v2
+      with:
+        tag_name: v${{ github.event.inputs.version }}
+        name: v${{ github.event.inputs.version }}
+        body: |
+          ## v${{ github.event.inputs.version }}
+          
+          ### Downloads
+          - **Linux (x86_64)**: `gnodid-linux`
+          
+          ### Installation
+          ```bash
+          # Download and make executable
+          chmod +x gnodid-linux
+          
+          # Move to your PATH
+          sudo mv gnodid-linux /usr/local/bin/gnodid
+          ```
+          
+          ### Version Info
+          Built with Go 1.24.5
+        draft: false
+        prerelease: ${{ github.ref == 'refs/heads/develop' }}
+        files: build/gnodid-linux
+        token: ${{ secrets.GITHUB_TOKEN }}
