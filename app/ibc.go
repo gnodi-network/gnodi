@@ -1,14 +1,22 @@
 package app
 
 import (
+	"fmt"
+	"path/filepath"
+
 	"cosmossdk.io/core/appmodule"
 	storetypes "cosmossdk.io/store/types"
+	wasmkeeper "github.com/CosmWasm/wasmd/x/wasm/keeper"
+	wasm "github.com/CosmWasm/wasmd/x/wasm"
+	wasmtypes "github.com/CosmWasm/wasmd/x/wasm/types"
 	"github.com/cosmos/cosmos-sdk/codec"
 	"github.com/cosmos/cosmos-sdk/runtime"
 	servertypes "github.com/cosmos/cosmos-sdk/server/types"
 	"github.com/cosmos/cosmos-sdk/types/module"
 	authtypes "github.com/cosmos/cosmos-sdk/x/auth/types"
+	distrkeeper "github.com/cosmos/cosmos-sdk/x/distribution/keeper"
 	govtypes "github.com/cosmos/cosmos-sdk/x/gov/types"
+	ibccallbacks "github.com/cosmos/ibc-go/v10/modules/apps/callbacks"
 	icamodule "github.com/cosmos/ibc-go/v10/modules/apps/27-interchain-accounts"
 	icacontroller "github.com/cosmos/ibc-go/v10/modules/apps/27-interchain-accounts/controller"
 	icacontrollerkeeper "github.com/cosmos/ibc-go/v10/modules/apps/27-interchain-accounts/controller/keeper"
@@ -30,6 +38,7 @@ import (
 	ibckeeper "github.com/cosmos/ibc-go/v10/modules/core/keeper"
 	solomachine "github.com/cosmos/ibc-go/v10/modules/light-clients/06-solomachine"
 	ibctm "github.com/cosmos/ibc-go/v10/modules/light-clients/07-tendermint"
+	"github.com/spf13/cast"
 )
 
 // registerIBCModules register IBC keepers and non dependency inject modules.
@@ -40,6 +49,8 @@ func (app *App) registerIBCModules(appOpts servertypes.AppOptions) error {
 		storetypes.NewKVStoreKey(ibctransfertypes.StoreKey),
 		storetypes.NewKVStoreKey(icahosttypes.StoreKey),
 		storetypes.NewKVStoreKey(icacontrollertypes.StoreKey),
+		storetypes.NewKVStoreKey(wasmtypes.StoreKey),
+		storetypes.NewTransientStoreKey(wasmtypes.TStoreKey),
 	); err != nil {
 		return err
 	}
@@ -99,6 +110,38 @@ func (app *App) registerIBCModules(appOpts servertypes.AppOptions) error {
 		govModuleAddr,
 	)
 
+	// Create CosmWasm keeper
+	homePath := cast.ToString(appOpts.Get("home"))
+	if homePath == "" {
+		homePath = DefaultNodeHome
+	}
+	wasmDir := filepath.Join(homePath, "wasm")
+
+	nodeConfig, err := wasm.ReadNodeConfig(appOpts)
+	if err != nil {
+		return fmt.Errorf("error while reading wasm node config: %w", err)
+	}
+
+	app.WasmKeeper = wasmkeeper.NewKeeper(
+		app.appCodec,
+		runtime.NewKVStoreService(app.GetKey(wasmtypes.StoreKey)),
+		app.AuthKeeper,
+		app.BankKeeper,
+		app.StakingKeeper,
+		distrkeeper.NewQuerier(app.DistrKeeper),
+		app.IBCKeeper.ChannelKeeper, // ICS4Wrapper
+		app.IBCKeeper.ChannelKeeper, // ChannelKeeper (v1)
+		app.IBCKeeper.ChannelKeeperV2,
+		app.TransferKeeper,
+		app.MsgServiceRouter(),
+		app.GRPCQueryRouter(),
+		wasmDir,
+		nodeConfig,
+		wasmtypes.VMConfig{},
+		wasmkeeper.BuiltInCapabilities(),
+		govModuleAddr,
+	)
+
 	// create IBC module from bottom to top of stack
 	var (
 		transferStack      porttypes.IBCModule = ibctransfer.NewIBCModule(app.TransferKeeper)
@@ -107,15 +150,44 @@ func (app *App) registerIBCModules(appOpts servertypes.AppOptions) error {
 		icaHostStack       porttypes.IBCModule = icahost.NewIBCModule(app.ICAHostKeeper)
 	)
 
+	// Wasm IBC handler (enables smart contracts to receive IBC callbacks)
+	wasmStackIBCHandler := wasm.NewIBCHandler(
+		app.WasmKeeper,
+		app.IBCKeeper.ChannelKeeper,
+		app.TransferKeeper,
+		app.IBCKeeper.ChannelKeeper,
+	)
+
+	// Wrap transfer and ICA controller stacks with CosmWasm callbacks middleware
+	transferStack = ibccallbacks.NewIBCMiddleware(
+		transferStack,
+		app.IBCKeeper.ChannelKeeper,
+		wasmStackIBCHandler,
+		wasm.DefaultMaxIBCCallbackGas,
+	)
+	// Update ICS4Wrapper on TransferKeeper to route through callbacks middleware
+	app.TransferKeeper.WithICS4Wrapper(transferStack.(porttypes.ICS4Wrapper))
+
+	icaControllerStack = ibccallbacks.NewIBCMiddleware(
+		icaControllerStack,
+		app.IBCKeeper.ChannelKeeper,
+		wasmStackIBCHandler,
+		wasm.DefaultMaxIBCCallbackGas,
+	)
+	// Update ICS4Wrapper on ICAControllerKeeper to route through callbacks middleware
+	app.ICAControllerKeeper.WithICS4Wrapper(icaControllerStack.(porttypes.ICS4Wrapper))
+
 	// create IBC v1 router, add transfer route, then set it on the keeper
 	ibcRouter := porttypes.NewRouter().
 		AddRoute(ibctransfertypes.ModuleName, transferStack).
 		AddRoute(icacontrollertypes.SubModuleName, icaControllerStack).
-		AddRoute(icahosttypes.SubModuleName, icaHostStack)
+		AddRoute(icahosttypes.SubModuleName, icaHostStack).
+		AddRoute(wasmtypes.ModuleName, wasmStackIBCHandler)
 
 	// create IBC v2 router, add transfer route, then set it on the keeper
 	ibcv2Router := ibcapi.NewRouter().
-		AddRoute(ibctransfertypes.PortID, transferStackV2)
+		AddRoute(ibctransfertypes.PortID, transferStackV2).
+		AddPrefixRoute(wasmkeeper.PortIDPrefixV2, wasmkeeper.NewIBC2Handler(app.WasmKeeper))
 
 	// this line is used by starport scaffolding # ibc/app/module
 
@@ -138,8 +210,18 @@ func (app *App) registerIBCModules(appOpts servertypes.AppOptions) error {
 		icamodule.NewAppModule(&app.ICAControllerKeeper, &app.ICAHostKeeper),
 		ibctm.NewAppModule(tmLightClientModule),
 		solomachine.NewAppModule(soloLightClientModule),
+		wasm.NewAppModule(app.appCodec, &app.WasmKeeper, app.StakingKeeper, app.AuthKeeper, app.BankKeeper, app.MsgServiceRouter(), nil),
 	); err != nil {
 		return err
+	}
+
+	// Register wasm snapshotter extension for state-sync support
+	if manager := app.SnapshotManager(); manager != nil {
+		if err := manager.RegisterExtensions(
+			wasmkeeper.NewWasmSnapshotter(app.CommitMultiStore(), &app.WasmKeeper),
+		); err != nil {
+			return fmt.Errorf("failed to register wasm snapshotter: %w", err)
+		}
 	}
 
 	return nil

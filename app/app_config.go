@@ -67,6 +67,7 @@ import (
 	icatypes "github.com/cosmos/ibc-go/v10/modules/apps/27-interchain-accounts/types"
 	ibctransfertypes "github.com/cosmos/ibc-go/v10/modules/apps/transfer/types"
 	ibcexported "github.com/cosmos/ibc-go/v10/modules/core/exported"
+	wasmtypes "github.com/CosmWasm/wasmd/x/wasm/types"
 	_ "github.com/gnodi-network/gnodi/x/distro/module"
 	distromoduletypes "github.com/gnodi-network/gnodi/x/distro/types"
 	"google.golang.org/protobuf/types/known/durationpb"
@@ -84,6 +85,7 @@ var (
 		{Account: ibctransfertypes.ModuleName, Permissions: []string{authtypes.Minter, authtypes.Burner}},
 		{Account: icatypes.ModuleName},
 		{Account: distromoduletypes.ModuleName, Permissions: []string{authtypes.Minter, authtypes.Burner, authtypes.Staking}},
+		{Account: wasmtypes.ModuleName, Permissions: []string{authtypes.Burner}},
 		// this line is used by starport scaffolding # stargate/app/maccPerms
 	}
 
@@ -128,6 +130,7 @@ var (
 						ibcexported.ModuleName,
 						// chain modules
 						distromoduletypes.ModuleName,
+						wasmtypes.ModuleName,
 						// this line is used by starport scaffolding # stargate/app/beginBlockers
 					},
 					EndBlockers: []string{
@@ -137,6 +140,7 @@ var (
 						group.ModuleName,
 						// chain modules
 						distromoduletypes.ModuleName,
+						wasmtypes.ModuleName,
 						// this line is used by starport scaffolding # stargate/app/endBlockers
 					},
 					// The following is mostly only needed when ModuleName != StoreKey name.
@@ -174,6 +178,8 @@ var (
 						icatypes.ModuleName,
 						// chain modules
 						distromoduletypes.ModuleName,
+						// wasm must be last as it can dispatch messages to other modules during genesis
+						wasmtypes.ModuleName,
 						// this line is used by starport scaffolding # stargate/app/initGenesis
 					},
 				}),

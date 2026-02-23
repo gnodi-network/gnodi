@@ -44,6 +44,7 @@ import (
 	icahostkeeper "github.com/cosmos/ibc-go/v10/modules/apps/27-interchain-accounts/host/keeper"
 	ibctransferkeeper "github.com/cosmos/ibc-go/v10/modules/apps/transfer/keeper"
 	ibckeeper "github.com/cosmos/ibc-go/v10/modules/core/keeper"
+	wasmkeeper "github.com/CosmWasm/wasmd/x/wasm/keeper"
 
 	"github.com/gnodi-network/gnodi/docs"
 	distromodulekeeper "github.com/gnodi-network/gnodi/x/distro/keeper"
@@ -97,6 +98,8 @@ type App struct {
 	ICAControllerKeeper icacontrollerkeeper.Keeper
 	ICAHostKeeper       icahostkeeper.Keeper
 	TransferKeeper      ibctransferkeeper.Keeper
+
+	WasmKeeper wasmkeeper.Keeper
 
 	DistroKeeper distromodulekeeper.Keeper
 	// this line is used by starport scaffolding # stargate/app/keeperDeclaration
@@ -190,7 +193,7 @@ func New(
 	// build app
 	app.App = appBuilder.Build(db, traceStore, baseAppOptions...)
 
-	// register legacy modules
+	// register legacy modules (IBC + CosmWasm)
 	if err := app.registerIBCModules(appOpts); err != nil {
 		panic(err)
 	}
