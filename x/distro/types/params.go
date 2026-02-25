@@ -9,7 +9,7 @@ import (
 
 const DefaultMinitingAddress string = ""
 const DefaultReceivingAddress string = ""
-const DefaultDenom string = "stake"
+const DefaultDenom string = "uGNOD"
 const DefaultMaxSupply uint64 = 0
 const DefaultDistributionStartDate string = "2025-07-22"
 const DefaultMonthsInHalvingPeriod uint64 = 12
