@@ -21,6 +21,24 @@
 
 - Go 1.24+
 - Git
+- C build toolchain (CGO is required — `cosmos/evm` links against libsecp256k1)
+
+**macOS**
+```bash
+xcode-select --install
+```
+
+**Ubuntu / Debian**
+```bash
+sudo apt-get update && sudo apt-get install -y build-essential
+```
+
+**Fedora / RHEL / Amazon Linux**
+```bash
+sudo dnf groupinstall -y "Development Tools"
+```
+
+> **Note for Docker users**: If you are building inside a minimal container image (e.g. `golang:alpine`), you must install `gcc` and `musl-dev` (Alpine) or `build-essential` (Debian-based) before running `go build`. Setting `CGO_ENABLED=0` will not work — the build will fail with `undefined: secp256k1.RecoverPubkey`.
 
 ---
 
@@ -30,6 +48,12 @@
 git clone https://github.com/gnodi-network/gnodi
 cd gnodi
 go build -o gnodid ./cmd/gnodid
+```
+
+Or use the Makefile to install the binary to `$GOPATH/bin`:
+
+```bash
+make install
 ```
 
 ---
