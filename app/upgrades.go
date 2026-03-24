@@ -8,6 +8,7 @@ import (
 
 	sdk "github.com/cosmos/cosmos-sdk/types"
 	"github.com/cosmos/cosmos-sdk/types/module"
+	banktypes "github.com/cosmos/cosmos-sdk/x/bank/types"
 
 	erc20types "github.com/cosmos/evm/x/erc20/types"
 	feemarkettypes "github.com/cosmos/evm/x/feemarket/types"
@@ -28,15 +29,29 @@ func (app *App) RegisterUpgradeHandlers() {
 		func(ctx context.Context, _ upgradetypes.Plan, fromVM module.VersionMap) (module.VersionMap, error) {
 			sdkCtx := sdk.UnwrapSDKContext(ctx)
 
-			// Initialize EvmCoinInfo in the EVM module store.
-			// This is required for NON-18 denom chains (Gnodi uses uGNOD at 6 decimals).
-			if err := app.EVMKeeper.InitEvmCoinInfo(sdkCtx); err != nil {
-				return nil, err
-			}
+			// Register uGNOD denom metadata in the bank module before RunMigrations.
+			// Mainnet has no denom metadata (confirmed via REST API). The x/vm
+			// InitGenesis calls InitEvmCoinInfo which looks up bank metadata for
+			// params.EvmDenom ("uGNOD") — if missing it panics. We must register it
+			// here before RunMigrations triggers InitGenesis for the new EVM modules.
+			// NOTE: do NOT call EVMKeeper.InitEvmCoinInfo here — the x/vm params store
+			// has not been initialized yet (InitGenesis hasn't run), so GetParams()
+			// returns empty. Let x/vm.InitGenesis handle it via RunMigrations.
+			app.BankKeeper.SetDenomMetaData(sdkCtx, banktypes.Metadata{
+				Description: "Gnodi native token",
+				Base:        "uGNOD",
+				DenomUnits: []*banktypes.DenomUnit{
+					{Denom: "uGNOD", Exponent: 0},
+					{Denom: "GNOD", Exponent: 6},
+				},
+				Name:    "Gnodi",
+				Symbol:  "GNOD",
+				Display: "GNOD",
+			})
 
-			// RunMigrations calls InitGenesis for any newly added modules
-			// and runs existing module migrations. New store keys must already
-			// be registered via SetStoreLoader (see below).
+			// RunMigrations calls InitGenesis for new modules (x/vm, x/feemarket,
+			// x/erc20, x/precisebank) and migrations for existing modules.
+			// x/vm.InitGenesis will call InitEvmCoinInfo, which now finds the metadata.
 			return app.ModuleManager.RunMigrations(ctx, app.Configurator(), fromVM)
 		},
 	)
