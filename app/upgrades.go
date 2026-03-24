@@ -28,15 +28,11 @@ func (app *App) RegisterUpgradeHandlers() {
 		EVMUpgradeName,
 		func(ctx context.Context, _ upgradetypes.Plan, fromVM module.VersionMap) (module.VersionMap, error) {
 			sdkCtx := sdk.UnwrapSDKContext(ctx)
+			cdc := app.appCodec
 
-			// Register uGNOD denom metadata in the bank module before RunMigrations.
-			// Mainnet has no denom metadata (confirmed via REST API). The x/vm
-			// InitGenesis calls InitEvmCoinInfo which looks up bank metadata for
-			// params.EvmDenom ("uGNOD") — if missing it panics. We must register it
-			// here before RunMigrations triggers InitGenesis for the new EVM modules.
-			// NOTE: do NOT call EVMKeeper.InitEvmCoinInfo here — the x/vm params store
-			// has not been initialized yet (InitGenesis hasn't run), so GetParams()
-			// returns empty. Let x/vm.InitGenesis handle it via RunMigrations.
+			// 1. Register uGNOD denom metadata in the bank module.
+			// Mainnet has no denom metadata. x/vm InitGenesis calls InitEvmCoinInfo
+			// which looks up bank metadata for params.EvmDenom — must exist first.
 			app.BankKeeper.SetDenomMetaData(sdkCtx, banktypes.Metadata{
 				Description: "Gnodi native token",
 				Base:        "uGNOD",
@@ -49,9 +45,22 @@ func (app *App) RegisterUpgradeHandlers() {
 				Display: "GNOD",
 			})
 
-			// RunMigrations calls InitGenesis for new modules (x/vm, x/feemarket,
-			// x/erc20, x/precisebank) and migrations for existing modules.
-			// x/vm.InitGenesis will call InitEvmCoinInfo, which now finds the metadata.
+			// 2. Manually initialize x/vm and x/feemarket with Gnodi-specific genesis.
+			// RunMigrations calls module.DefaultGenesis() for new modules, but
+			// x/vm.DefaultParams() hardcodes EvmDenom="aatom" regardless of our config.
+			// We must init these modules ourselves and mark them in fromVM so
+			// RunMigrations skips their InitGenesis.
+			// x/erc20 and x/precisebank use correct defaults and are left to RunMigrations.
+			evmMod := app.ModuleManager.Modules[evmtypes.ModuleName].(module.HasABCIGenesis)
+			evmMod.InitGenesis(sdkCtx, cdc, cdc.MustMarshalJSON(NewEVMGenesisState()))
+			fromVM[evmtypes.ModuleName] = 1
+
+			feeMarketMod := app.ModuleManager.Modules[feemarkettypes.ModuleName].(module.HasABCIGenesis)
+			feeMarketMod.InitGenesis(sdkCtx, cdc, cdc.MustMarshalJSON(NewFeeMarketGenesisState()))
+			fromVM[feemarkettypes.ModuleName] = 1
+
+			// 3. RunMigrations handles existing module migrations and InitGenesis
+			// for x/erc20 and x/precisebank (their defaults are correct).
 			return app.ModuleManager.RunMigrations(ctx, app.Configurator(), fromVM)
 		},
 	)
