@@ -3,6 +3,8 @@ package app
 import (
 	"encoding/json"
 
+	sdkmath "cosmossdk.io/math"
+
 	erc20types "github.com/cosmos/evm/x/erc20/types"
 	feemarkettypes "github.com/cosmos/evm/x/feemarket/types"
 	evmtypes "github.com/cosmos/evm/x/vm/types"
@@ -40,10 +42,13 @@ func NewErc20GenesisState() *erc20types.GenesisState {
 }
 
 // NewFeeMarketGenesisState returns the default genesis state for the x/feemarket module.
-// NoBaseFee is set to true so the chain starts without a dynamic base fee, matching
-// the original Gnodi fee model.
+// NoBaseFee=true disables the EIP-1559 dynamic base fee mechanism, matching the original
+// Gnodi fee model. BaseFee is explicitly zeroed so that wallets and tooling see a
+// consistent zero floor — the default of 1_000_000_000 would be misleading when the
+// base fee mechanism is disabled and should never be enforced.
 func NewFeeMarketGenesisState() *feemarkettypes.GenesisState {
 	feeMarketGenState := feemarkettypes.DefaultGenesisState()
 	feeMarketGenState.Params.NoBaseFee = true
+	feeMarketGenState.Params.BaseFee = sdkmath.LegacyZeroDec()
 	return feeMarketGenState
 }

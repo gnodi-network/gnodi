@@ -9,6 +9,7 @@ import (
 	sdk "github.com/cosmos/cosmos-sdk/types"
 	"github.com/cosmos/cosmos-sdk/types/module"
 	banktypes "github.com/cosmos/cosmos-sdk/x/bank/types"
+	"github.com/cosmos/cosmos-sdk/x/group"
 
 	erc20types "github.com/cosmos/evm/x/erc20/types"
 	feemarkettypes "github.com/cosmos/evm/x/feemarket/types"
@@ -18,9 +19,28 @@ import (
 
 const (
 	// EVMUpgradeName is the on-chain upgrade name for the EVM integration upgrade.
-	// This upgrade adds x/vm, x/feemarket, x/erc20, and x/precisebank modules.
+	// This upgrade adds x/vm, x/feemarket, x/erc20, and x/precisebank modules,
+	// and disables x/group via the circuit breaker.
 	EVMUpgradeName = "evm-upgrade"
 )
+
+// groupMsgTypeURLs lists all x/group message type URLs to be disabled via the
+// circuit breaker. x/group is deprecated upstream and has zero usage on Gnodi.
+var groupMsgTypeURLs = []string{
+	sdk.MsgTypeURL(&group.MsgCreateGroup{}),
+	sdk.MsgTypeURL(&group.MsgUpdateGroupMembers{}),
+	sdk.MsgTypeURL(&group.MsgUpdateGroupAdmin{}),
+	sdk.MsgTypeURL(&group.MsgUpdateGroupMetadata{}),
+	sdk.MsgTypeURL(&group.MsgCreateGroupPolicy{}),
+	sdk.MsgTypeURL(&group.MsgUpdateGroupPolicyAdmin{}),
+	sdk.MsgTypeURL(&group.MsgUpdateGroupPolicyDecisionPolicy{}),
+	sdk.MsgTypeURL(&group.MsgUpdateGroupPolicyMetadata{}),
+	sdk.MsgTypeURL(&group.MsgSubmitProposal{}),
+	sdk.MsgTypeURL(&group.MsgWithdrawProposal{}),
+	sdk.MsgTypeURL(&group.MsgVote{}),
+	sdk.MsgTypeURL(&group.MsgExec{}),
+	sdk.MsgTypeURL(&group.MsgLeaveGroup{}),
+}
 
 // RegisterUpgradeHandlers registers the upgrade handlers for the app.
 func (app *App) RegisterUpgradeHandlers() {
@@ -59,7 +79,18 @@ func (app *App) RegisterUpgradeHandlers() {
 			feeMarketMod.InitGenesis(sdkCtx, cdc, cdc.MustMarshalJSON(NewFeeMarketGenesisState()))
 			fromVM[feemarkettypes.ModuleName] = 1
 
-			// 3. RunMigrations handles existing module migrations and InitGenesis
+			// 3. Disable x/group via the circuit breaker.
+			// x/group is deprecated and unused on Gnodi. Its MsgExec execution path
+			// calls message handlers directly, bypassing all ante middleware. Disabling
+			// at the circuit level provides defense in depth alongside the
+			// groupLimiterDecorator in the ante handler.
+			for _, typeURL := range groupMsgTypeURLs {
+				if err := app.CircuitBreakerKeeper.DisableList.Set(ctx, typeURL); err != nil {
+					return nil, err
+				}
+			}
+
+			// 4. RunMigrations handles existing module migrations and InitGenesis
 			// for x/erc20 and x/precisebank (their defaults are correct).
 			return app.ModuleManager.RunMigrations(ctx, app.Configurator(), fromVM)
 		},
