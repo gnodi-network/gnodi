@@ -56,6 +56,7 @@ func (app *App) configureEVMMempool(appOpts servertypes.AppOptions, logger log.L
 		),
 	)
 	app.SetPrepareProposal(abciProposalHandler.PrepareProposalHandler())
+	app.SetProcessProposal(abciProposalHandler.ProcessProposalHandler())
 
 	return nil
 }

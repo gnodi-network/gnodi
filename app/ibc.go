@@ -116,6 +116,15 @@ func (app *App) registerIBCModules() error {
 		1_000_000,
 	)
 
+	// Rebind TransferKeeper's ICS4Wrapper to the top of the assembled middleware stack.
+	// Without this, keeper-originated sends (e.g. MsgTransfer) would bypass the ERC-20 and
+	// callbacks middleware and go directly to ChannelKeeper, which was the initial ICS4Wrapper.
+	ics4Wrapper, ok := transferStack.(porttypes.ICS4Wrapper)
+	if !ok {
+		panic("transfer middleware stack does not implement porttypes.ICS4Wrapper")
+	}
+	app.TransferKeeper.WithICS4Wrapper(ics4Wrapper)
+
 	// IBC Transfer Stack (v2 — IBC Eureka protocol).
 	var transferStackV2 ibcapi.IBCModule
 	transferStackV2 = transferv2.NewIBCModule(app.TransferKeeper)

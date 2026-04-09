@@ -149,7 +149,6 @@ import (
 	"github.com/gnodi-network/gnodi/docs"
 
 	"github.com/cosmos/gogoproto/proto"
-	testdata_pulsar "github.com/cosmos/cosmos-sdk/testutil/testdata/testpb"
 )
 
 const (
@@ -736,8 +735,6 @@ func New(
 		panic(err)
 	}
 	reflectionv1.RegisterReflectionServiceServer(app.GRPCQueryRouter(), reflectionSvc)
-
-	testdata_pulsar.RegisterQueryServer(app.GRPCQueryRouter(), testdata_pulsar.QueryImpl{})
 
 	// Simulation manager
 	overrideModules := map[string]module.AppModuleSimulation{

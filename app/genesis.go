@@ -19,9 +19,24 @@ import (
 // object provided to it during init.
 type GenesisState map[string]json.RawMessage
 
+// activePrecompiles lists the static precompiles enabled on Gnodi.
+// The ICS20 precompile (0x...0802) is intentionally excluded: cosmos/evm v0.5.1
+// contains GHSA-54gx-3cgr-7mfm, a critical reentrancy vulnerability in the ICS20
+// precompile that was exploited on Saga chain (January 2026). The fix ships in
+// cosmos/evm v0.6.0, which has breaking API changes requiring a separate migration.
+// Until that upgrade is performed, the ICS20 precompile must remain disabled.
+var activePrecompiles = []string{
+	evmtypes.P256PrecompileAddress,
+	evmtypes.Bech32PrecompileAddress,
+	evmtypes.StakingPrecompileAddress,
+	evmtypes.DistributionPrecompileAddress,
+	evmtypes.VestingPrecompileAddress,
+	evmtypes.BankPrecompileAddress,
+	evmtypes.GovPrecompileAddress,
+	evmtypes.SlashingPrecompileAddress,
+}
+
 // NewEVMGenesisState returns the default genesis state for the x/vm module.
-// All available static precompiles are enabled by default so Gnodi EVM contracts
-// can call staking, distribution, governance, etc. via precompile addresses.
 func NewEVMGenesisState() *evmtypes.GenesisState {
 	evmGenState := evmtypes.DefaultGenesisState()
 	// For 6-decimal chains: EvmDenom is the native denom (uGNOD), not the extended 18-decimal
@@ -31,7 +46,7 @@ func NewEVMGenesisState() *evmtypes.GenesisState {
 	evmGenState.Params.ExtendedDenomOptions = &evmtypes.ExtendedDenomOptions{
 		ExtendedDenom: evmtypes.GetEVMCoinExtendedDenom(),
 	}
-	evmGenState.Params.ActiveStaticPrecompiles = evmtypes.AvailableStaticPrecompiles
+	evmGenState.Params.ActiveStaticPrecompiles = activePrecompiles
 	evmGenState.Preinstalls = evmtypes.DefaultPreinstalls
 	return evmGenState
 }

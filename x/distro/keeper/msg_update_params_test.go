@@ -36,18 +36,26 @@ func TestMsgUpdateParams(t *testing.T) {
 			expErrMsg: "invalid authority",
 		},
 		{
-			name: "send enabled param",
+			name: "invalid params",
 			input: &types.MsgUpdateParams{
 				Authority: authorityStr,
 				Params:    types.Params{},
 			},
-			expErr: false,
+			expErr:    true,
+			expErrMsg: "minting address cannot be empty",
 		},
 		{
 			name: "all good",
 			input: &types.MsgUpdateParams{
 				Authority: authorityStr,
-				Params:    params,
+				Params: types.NewParams(
+					authorityStr,
+					authorityStr,
+					"uGNOD",
+					35_000_000_000_000_000,
+					"2025-07-22",
+					12,
+				),
 			},
 			expErr: false,
 		},
