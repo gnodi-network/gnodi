@@ -8,6 +8,7 @@ import (
 	"github.com/cosmos/cosmos-sdk/client"
 	sdk "github.com/cosmos/cosmos-sdk/types"
 	errortypes "github.com/cosmos/cosmos-sdk/types/errors"
+	"github.com/cosmos/cosmos-sdk/x/authz"
 	"github.com/cosmos/cosmos-sdk/x/group"
 	"github.com/ethereum/go-ethereum/common"
 
@@ -33,31 +34,59 @@ func newGroupLimiterDecorator(disabledMsgTypes ...string) groupLimiterDecorator 
 
 func (g groupLimiterDecorator) AnteHandle(ctx sdk.Context, tx sdk.Tx, simulate bool, next sdk.AnteHandler) (sdk.Context, error) {
 	for _, msg := range tx.GetMsgs() {
-		if err := g.checkMsg(msg, 1); err != nil {
+		if err := g.checkMsg(msg, false, 1); err != nil {
 			return ctx, errorsmod.Wrapf(errortypes.ErrUnauthorized, "%s", err.Error())
 		}
 	}
 	return next(ctx, tx, simulate)
 }
 
-func (g groupLimiterDecorator) checkMsg(msg sdk.Msg, depth int) error {
+// checkMsg recursively inspects msg and any container payloads (group proposals,
+// authz execs) for disabled message types. isInsideContainer is true whenever we
+// are inspecting the payload of a container message; the disabled-type check is
+// intentionally scoped to container payloads so that top-level EVM transactions
+// are still handled by the EVM ante handler downstream.
+func (g groupLimiterDecorator) checkMsg(msg sdk.Msg, isInsideContainer bool, depth int) error {
 	if depth >= maxGroupNestedMsgs {
 		return fmt.Errorf("exceeded max nested message depth in group proposal")
 	}
-	// Check the message itself.
-	if g.isDisabled(sdk.MsgTypeURL(msg)) {
-		return fmt.Errorf("found disabled msg type: %s", sdk.MsgTypeURL(msg))
-	}
-	// Recursively inspect messages embedded in a group proposal.
-	if proposal, ok := msg.(*group.MsgSubmitProposal); ok {
-		innerMsgs, err := proposal.GetMsgs()
+	switch m := msg.(type) {
+	case *authz.MsgExec:
+		// Unwrap authz.MsgExec and recurse — inner messages are inside a container.
+		innerMsgs, err := m.GetMessages()
 		if err != nil {
 			return err
 		}
 		for _, inner := range innerMsgs {
-			if err := g.checkMsg(inner, depth+1); err != nil {
+			if err := g.checkMsg(inner, true, depth+1); err != nil {
 				return err
 			}
+		}
+	case *authz.MsgGrant:
+		// Check the type URL of the authorization being granted.
+		authorization, err := m.GetAuthorization()
+		if err != nil {
+			return err
+		}
+		if g.isDisabled(authorization.MsgTypeURL()) {
+			return fmt.Errorf("found disabled msg type in authz grant: %s", authorization.MsgTypeURL())
+		}
+	case *group.MsgSubmitProposal:
+		// Unwrap group proposal messages and recurse — they are inside a container.
+		innerMsgs, err := m.GetMsgs()
+		if err != nil {
+			return err
+		}
+		for _, inner := range innerMsgs {
+			if err := g.checkMsg(inner, true, depth+1); err != nil {
+				return err
+			}
+		}
+	default:
+		// Only block disabled types when inside a container (group or authz).
+		// Top-level messages (e.g. MsgEthereumTx) are handled by the EVM ante handler.
+		if isInsideContainer && g.isDisabled(sdk.MsgTypeURL(msg)) {
+			return fmt.Errorf("found disabled msg type: %s", sdk.MsgTypeURL(msg))
 		}
 	}
 	return nil

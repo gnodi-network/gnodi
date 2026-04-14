@@ -490,6 +490,9 @@ func New(
 		authAddr,
 		app.AccountKeeper.AddressCodec(),
 	)
+	// Wire the circuit breaker so that entries written to the DisableList are
+	// enforced at the BaseApp message router level (GCA-01).
+	app.SetCircuitBreaker(&app.CircuitBreakerKeeper)
 
 	app.NftKeeper = nftkeeper.NewKeeper(
 		runtime.NewKVStoreService(keys[nft.StoreKey]),
