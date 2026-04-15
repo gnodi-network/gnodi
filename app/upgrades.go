@@ -3,6 +3,7 @@ package app
 import (
 	"context"
 
+	sdkmath "cosmossdk.io/math"
 	storetypes "cosmossdk.io/store/types"
 	upgradetypes "cosmossdk.io/x/upgrade/types"
 
@@ -28,6 +29,7 @@ const (
 // circuit breaker. x/group is deprecated upstream and has zero usage on Gnodi.
 var groupMsgTypeURLs = []string{
 	sdk.MsgTypeURL(&group.MsgCreateGroup{}),
+	sdk.MsgTypeURL(&group.MsgCreateGroupWithPolicy{}),
 	sdk.MsgTypeURL(&group.MsgUpdateGroupMembers{}),
 	sdk.MsgTypeURL(&group.MsgUpdateGroupAdmin{}),
 	sdk.MsgTypeURL(&group.MsgUpdateGroupMetadata{}),
@@ -78,6 +80,17 @@ func (app *App) RegisterUpgradeHandlers() {
 			feeMarketMod := app.ModuleManager.Modules[feemarkettypes.ModuleName].(module.HasABCIGenesis)
 			feeMarketMod.InitGenesis(sdkCtx, cdc, cdc.MustMarshalJSON(NewFeeMarketGenesisState()))
 			fromVM[feemarkettypes.ModuleName] = 1
+
+			// 2b. Set MinGasPrice = 1 Gwei on the feemarket params.
+			// NewFeeMarketGenesisState() already includes MinGasPrice=1Gwei, but we
+			// explicitly set it here via the keeper so the value is persisted in state
+			// independently of InitGenesis ordering. This also makes the intent clear
+			// for future upgrades.
+			feeMarketParams := app.FeeMarketKeeper.GetParams(sdkCtx)
+			feeMarketParams.MinGasPrice = sdkmath.LegacyNewDec(1_000_000_000)
+			if err := app.FeeMarketKeeper.SetParams(sdkCtx, feeMarketParams); err != nil {
+				return nil, err
+			}
 
 			// 3. Disable x/group via the circuit breaker.
 			// x/group is deprecated and unused on Gnodi. Its MsgExec execution path

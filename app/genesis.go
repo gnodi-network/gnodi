@@ -56,14 +56,20 @@ func NewErc20GenesisState() *erc20types.GenesisState {
 	return erc20types.DefaultGenesisState()
 }
 
-// NewFeeMarketGenesisState returns the default genesis state for the x/feemarket module.
-// NoBaseFee=true disables the EIP-1559 dynamic base fee mechanism, matching the original
-// Gnodi fee model. BaseFee is explicitly zeroed so that wallets and tooling see a
-// consistent zero floor — the default of 1_000_000_000 would be misleading when the
-// base fee mechanism is disabled and should never be enforced.
+// NewFeeMarketGenesisState returns the genesis state for the x/feemarket module.
+// NoBaseFee=true disables the EIP-1559 dynamic base fee mechanism so that gas
+// prices remain stable and predictable. BaseFee is explicitly zeroed since it is
+// not enforced when NoBaseFee=true.
+//
+// MinGasPrice is set to 1 Gwei (1_000_000_000 in 18-decimal Wei units) to establish
+// a consensus-level minimum fee floor for all EVM transactions. This is the value
+// enforced by CheckGlobalFee in the EVM ante handler and is the natural floor that
+// MetaMask and other EVM wallets already target. Without this, CheckGlobalFee
+// short-circuits on zero and EVM txs can be submitted fee-free.
 func NewFeeMarketGenesisState() *feemarkettypes.GenesisState {
 	feeMarketGenState := feemarkettypes.DefaultGenesisState()
 	feeMarketGenState.Params.NoBaseFee = true
 	feeMarketGenState.Params.BaseFee = sdkmath.LegacyZeroDec()
+	feeMarketGenState.Params.MinGasPrice = sdkmath.LegacyNewDec(1_000_000_000)
 	return feeMarketGenState
 }

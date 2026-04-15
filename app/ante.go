@@ -129,17 +129,11 @@ func (app *App) setAnteHandler(txConfig client.TxConfig, maxGasWanted uint64) {
 		panic(err)
 	}
 
-	// Prepend the group limiter to block disallowed message types from being
-	// embedded inside x/group proposals. x/group's execution path bypasses ante
-	// middleware, so we must reject disallowed msgs at MsgSubmitProposal time.
-	// MsgCreateGroupWithPolicy is also blocked to prevent recursive group creation
-	// inside proposals, which could otherwise be used to stage a new group that
-	// submits its own proposals without ante-handler scrutiny.
+	// Prepend the group limiter to block MsgEthereumTx from being embedded inside
+	// x/group proposals. x/group's execution path bypasses ante middleware, so we
+	// must reject disallowed msgs at MsgSubmitProposal time.
 	evmAnteHandler := evmante.NewAnteHandler(options)
-	groupLimiter := newGroupLimiterDecorator(
-		sdk.MsgTypeURL(&evmtypes.MsgEthereumTx{}),
-		sdk.MsgTypeURL(&group.MsgCreateGroupWithPolicy{}),
-	)
+	groupLimiter := newGroupLimiterDecorator(sdk.MsgTypeURL(&evmtypes.MsgEthereumTx{}))
 	app.SetAnteHandler(func(ctx sdk.Context, tx sdk.Tx, simulate bool) (sdk.Context, error) {
 		return groupLimiter.AnteHandle(ctx, tx, simulate, evmAnteHandler)
 	})
