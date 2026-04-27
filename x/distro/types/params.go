@@ -7,10 +7,13 @@ import (
 	sdk "github.com/cosmos/cosmos-sdk/types"
 )
 
-const DefaultMinitingAddress string = ""
+// DefaultMintingAddress and DefaultReceivingAddress are intentionally empty.
+// These are deployment-specific values that must be set by the chain operator
+// in the genesis file or via governance before minting operations can proceed.
+const DefaultMintingAddress string = ""
 const DefaultReceivingAddress string = ""
-const DefaultDenom string = "stake"
-const DefaultMaxSupply uint64 = 0
+const DefaultDenom string = "uGNOD"
+const DefaultMaxSupply uint64 = 35_000_000_000_000_000 // 35 billion GNOD (in uGNOD)
 const DefaultDistributionStartDate string = "2025-07-22"
 const DefaultMonthsInHalvingPeriod uint64 = 12
 
@@ -33,12 +36,12 @@ func NewParams(
 }
 
 func DefaultParams() Params {
-	return NewParams(DefaultMinitingAddress, DefaultReceivingAddress, DefaultDenom, DefaultMaxSupply, DefaultDistributionStartDate, DefaultMonthsInHalvingPeriod)
+	return NewParams(DefaultMintingAddress, DefaultReceivingAddress, DefaultDenom, DefaultMaxSupply, DefaultDistributionStartDate, DefaultMonthsInHalvingPeriod)
 }
 
 // Validate validates the set of params.
 func (p Params) Validate() error {
-	if err := validateMinitingAddress(p.MintingAddress); err != nil {
+	if err := validateMintingAddress(p.MintingAddress); err != nil {
 		return err
 	}
 	if err := validateReceivingAddress(p.ReceivingAddress); err != nil {
@@ -59,7 +62,7 @@ func (p Params) Validate() error {
 
 	return nil
 }
-func validateMinitingAddress(v string) error {
+func validateMintingAddress(v string) error {
 	if v == "" {
 		return fmt.Errorf("minting address cannot be empty")
 	}
@@ -80,8 +83,8 @@ func validateReceivingAddress(v string) error {
 	return nil
 }
 func validateDenom(v string) error {
-	if v == "" {
-		return fmt.Errorf("denom cannot be empty")
+	if err := sdk.ValidateDenom(v); err != nil {
+		return fmt.Errorf("invalid denom: %w", err)
 	}
 	return nil
 }

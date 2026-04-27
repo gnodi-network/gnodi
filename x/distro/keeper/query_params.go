@@ -18,7 +18,10 @@ func (q queryServer) Params(ctx context.Context, req *types.QueryParamsRequest) 
 	}
 
 	params, err := q.k.Params.Get(ctx)
-	if err != nil && !errors.Is(err, collections.ErrNotFound) {
+	if err != nil {
+		if errors.Is(err, collections.ErrNotFound) {
+			return nil, status.Error(codes.NotFound, "module params not initialized")
+		}
 		return nil, status.Error(codes.Internal, "internal error")
 	}
 

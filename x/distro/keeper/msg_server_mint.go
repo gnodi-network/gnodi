@@ -14,19 +14,18 @@ import (
 
 func (k msgServer) Mint(goCtx context.Context, msg *types.MsgMint) (*types.MsgMintResponse, error) {
 	ctx := sdk.UnwrapSDKContext(goCtx)
-	if _, err := k.addressCodec.StringToBytes(msg.Signer); err != nil {
-		return nil, errorsmod.Wrap(err, "invalid authority address")
+
+	signerBytes, err := k.addressCodec.StringToBytes(msg.Signer)
+	if err != nil {
+		return nil, errorsmod.Wrap(err, "invalid signer address")
 	}
 
-	signer := msg.GetSigner()
-
-	if len(signer) == 0 {
-		return nil, errorsmod.Wrap(sdkerrors.ErrInvalidRequest, "signer is required")
+	params, err := k.Params.Get(goCtx)
+	if err != nil {
+		return nil, errorsmod.Wrap(sdkerrors.ErrNotFound, "module params not initialized")
 	}
 
-	params := k.GetParams(ctx)
-
-	if !k.IsAuthorized(params, signer) {
+	if !k.IsAuthorized(params, signerBytes) {
 		return nil, errorsmod.Wrap(sdkerrors.ErrUnauthorized, "unauthorized sender")
 	}
 
@@ -41,7 +40,7 @@ func (k msgServer) Mint(goCtx context.Context, msg *types.MsgMint) (*types.MsgMi
 	}
 
 	coins := sdk.NewCoins(sdk.NewCoin(params.Denom, math.NewIntFromUint64(msgAmount.Uint64())))
-	err := k.bankKeeper.MintCoins(ctx, types.ModuleName, coins)
+	err = k.bankKeeper.MintCoins(ctx, types.ModuleName, coins)
 	if err != nil {
 		return nil, err
 	}
@@ -58,13 +57,13 @@ func parseDate(dateStr string) (time.Time, error) {
 }
 
 func (k msgServer) depositCoins(ctx context.Context, toAddress string, amount uint64, denom string) error {
-	acct, err := sdk.AccAddressFromBech32(toAddress)
+	acctBytes, err := k.addressCodec.StringToBytes(toAddress)
 	if err != nil {
 		return errorsmod.Wrapf(sdkerrors.ErrInvalidAddress, "invalid address '%s'", toAddress)
 	}
 
 	coins := sdk.NewCoins(sdk.NewCoin(denom, math.NewIntFromUint64(amount)))
-	if err := k.bankKeeper.SendCoinsFromModuleToAccount(ctx, types.ModuleName, acct, coins); err != nil {
+	if err := k.bankKeeper.SendCoinsFromModuleToAccount(ctx, types.ModuleName, sdk.AccAddress(acctBytes), coins); err != nil {
 		return err
 	}
 	return nil
@@ -89,16 +88,15 @@ func validateMintingLimits(ctx sdk.Context, currentSupply math.Uint, amount math
 	var totalDistributable uint64
 
 	for period := uint64(1); period < currentHalvingPeriod; period++ {
-		periodYearlyLimit := params.MaxSupply / (1 << (period - 1)) / 2
-		totalDistributable += periodYearlyLimit
+		totalDistributable += halvingPeriodLimit(params.MaxSupply, period)
 	}
 
 	if currentHalvingPeriod > 0 {
-		periodStart := startDate.AddDate(0, int((currentHalvingPeriod-1)*params.MonthsInHalvingPeriod), 0)
-		periodEnd := startDate.AddDate(0, int(currentHalvingPeriod*params.MonthsInHalvingPeriod), -1)
+		periodStart := addMonths(startDate, int((currentHalvingPeriod-1)*params.MonthsInHalvingPeriod))
+		periodEnd := addMonths(startDate, int(currentHalvingPeriod*params.MonthsInHalvingPeriod)).AddDate(0, 0, -1)
 
 		daysInPeriod := uint64(periodEnd.Sub(periodStart).Hours()/24) + 1
-		periodYearlyLimit := params.MaxSupply / (1 << (currentHalvingPeriod - 1)) / 2
+		periodYearlyLimit := halvingPeriodLimit(params.MaxSupply, currentHalvingPeriod)
 
 		daysElapsed := uint64(targetDate.Sub(periodStart).Hours() / 24)
 		if daysElapsed > daysInPeriod {
@@ -118,6 +116,38 @@ func validateMintingLimits(ctx sdk.Context, currentSupply math.Uint, amount math
 	return nil
 }
 
+// halvingPeriodLimit returns the total distributable tokens for the given halving period.
+// Guards against a division-by-zero: uint64(1) << n is 0 for n >= 64 in Go, which
+// would cause a runtime panic. Period 65+ would require shifting by >= 64 bits; in
+// practice all supply is exhausted well before that point, so the limit is 0.
+func halvingPeriodLimit(maxSupply, period uint64) uint64 {
+	if period == 0 || period > 64 {
+		return 0
+	}
+	return maxSupply / (uint64(1) << (period - 1)) / 2
+}
+
+// addMonths adds n calendar months to t, clamping the day to the last day of
+// the resulting month rather than overflowing into the next month the way
+// time.AddDate does. This ensures period boundary calculations are consistent
+// with the monthsBetween period-index calculation for month-end start dates.
+func addMonths(t time.Time, months int) time.Time {
+	y, m, d := t.Date()
+	targetMonth := int(m) + months
+	targetYear := y + (targetMonth-1)/12
+	targetMonth = ((targetMonth - 1) % 12) + 1
+	if targetMonth < 1 {
+		targetMonth += 12
+		targetYear--
+	}
+	// Clamp day to last day of target month.
+	lastDay := time.Date(targetYear, time.Month(targetMonth)+1, 0, 0, 0, 0, 0, t.Location()).Day()
+	if d > lastDay {
+		d = lastDay
+	}
+	return time.Date(targetYear, time.Month(targetMonth), d, t.Hour(), t.Minute(), t.Second(), t.Nanosecond(), t.Location())
+}
+
 func monthsBetween(start, end time.Time) int {
 	if end.Before(start) {
 		return -1
@@ -126,12 +156,18 @@ func monthsBetween(start, end time.Time) int {
 	years := end.Year() - start.Year()
 	months := years*12 + int(end.Month()) - int(start.Month())
 
-	// Adjust for day of month
+	// Adjust for day of month. If end's day is less than start's day, a full
+	// month hasn't elapsed yet — unless end is the last day of its month,
+	// which means start's day simply doesn't exist in end's month (e.g.
+	// Jan 31 → Feb 28: Feb has no 31st, so Feb 28 is the month boundary).
+	// This is consistent with addMonths() clamping: addMonths(Jan31, 1) = Feb28.
 	if end.Day() < start.Day() {
-		months--
+		endIsLastDay := end.Day() == time.Date(end.Year(), end.Month()+1, 0, 0, 0, 0, 0, end.Location()).Day()
+		if !endIsLastDay {
+			months--
+		}
 	}
 
-	// Handle edge case where end is exactly on start's day but in a prior month
 	if months < 0 {
 		return 0
 	}

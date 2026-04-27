@@ -2,13 +2,22 @@ package app
 
 import (
 	"cosmossdk.io/core/appmodule"
-	storetypes "cosmossdk.io/store/types"
 	"github.com/cosmos/cosmos-sdk/codec"
 	"github.com/cosmos/cosmos-sdk/runtime"
-	servertypes "github.com/cosmos/cosmos-sdk/server/types"
+	sdk "github.com/cosmos/cosmos-sdk/types"
 	"github.com/cosmos/cosmos-sdk/types/module"
 	authtypes "github.com/cosmos/cosmos-sdk/x/auth/types"
 	govtypes "github.com/cosmos/cosmos-sdk/x/gov/types"
+
+	evmaddress "github.com/cosmos/evm/encoding/address"
+	"github.com/cosmos/evm/x/erc20"
+	erc20v2 "github.com/cosmos/evm/x/erc20/v2"
+	ibccallbackskeeper "github.com/cosmos/evm/x/ibc/callbacks/keeper"
+	"github.com/cosmos/evm/x/ibc/transfer"
+	transferkeeper "github.com/cosmos/evm/x/ibc/transfer/keeper"
+	transferv2 "github.com/cosmos/evm/x/ibc/transfer/v2"
+
+	ibccallbacks "github.com/cosmos/ibc-go/v10/modules/apps/callbacks"
 	icamodule "github.com/cosmos/ibc-go/v10/modules/apps/27-interchain-accounts"
 	icacontroller "github.com/cosmos/ibc-go/v10/modules/apps/27-interchain-accounts/controller"
 	icacontrollerkeeper "github.com/cosmos/ibc-go/v10/modules/apps/27-interchain-accounts/controller/keeper"
@@ -17,144 +26,141 @@ import (
 	icahostkeeper "github.com/cosmos/ibc-go/v10/modules/apps/27-interchain-accounts/host/keeper"
 	icahosttypes "github.com/cosmos/ibc-go/v10/modules/apps/27-interchain-accounts/host/types"
 	icatypes "github.com/cosmos/ibc-go/v10/modules/apps/27-interchain-accounts/types"
-	ibctransfer "github.com/cosmos/ibc-go/v10/modules/apps/transfer"
-	ibctransferkeeper "github.com/cosmos/ibc-go/v10/modules/apps/transfer/keeper"
 	ibctransfertypes "github.com/cosmos/ibc-go/v10/modules/apps/transfer/types"
-	ibctransferv2 "github.com/cosmos/ibc-go/v10/modules/apps/transfer/v2"
 	ibc "github.com/cosmos/ibc-go/v10/modules/core"
-	ibcclienttypes "github.com/cosmos/ibc-go/v10/modules/core/02-client/types" // nolint:staticcheck // Deprecated: params key table is needed for params migration
-	ibcconnectiontypes "github.com/cosmos/ibc-go/v10/modules/core/03-connection/types"
+	ibcclienttypes "github.com/cosmos/ibc-go/v10/modules/core/02-client/types"
 	porttypes "github.com/cosmos/ibc-go/v10/modules/core/05-port/types"
 	ibcapi "github.com/cosmos/ibc-go/v10/modules/core/api"
 	ibcexported "github.com/cosmos/ibc-go/v10/modules/core/exported"
 	ibckeeper "github.com/cosmos/ibc-go/v10/modules/core/keeper"
-	solomachine "github.com/cosmos/ibc-go/v10/modules/light-clients/06-solomachine"
 	ibctm "github.com/cosmos/ibc-go/v10/modules/light-clients/07-tendermint"
 )
 
-// registerIBCModules register IBC keepers and non dependency inject modules.
-func (app *App) registerIBCModules(appOpts servertypes.AppOptions) error {
-	// set up non depinject support modules store keys
-	if err := app.RegisterStores(
-		storetypes.NewKVStoreKey(ibcexported.StoreKey),
-		storetypes.NewKVStoreKey(ibctransfertypes.StoreKey),
-		storetypes.NewKVStoreKey(icahosttypes.StoreKey),
-		storetypes.NewKVStoreKey(icacontrollertypes.StoreKey),
-	); err != nil {
-		return err
-	}
+// registerIBCModules initializes the IBC transfer keeper (cosmos/evm version), ICA host and
+// controller keepers, and wires up the IBC routing stack with ERC-20 middleware and IBC callbacks.
+//
+// This must be called AFTER app.Erc20Keeper and app.EVMKeeper are initialized (in New()) because
+// the cosmos/evm TransferKeeper and CallbackKeeper both depend on Erc20Keeper, and
+// the callbacks keeper needs EVMKeeper.
+func (app *App) registerIBCModules() error {
+	authAddr := authtypes.NewModuleAddress(govtypes.ModuleName).String()
 
-	// register the key tables for legacy param subspaces
-	keyTable := ibcclienttypes.ParamKeyTable()
-	keyTable.RegisterParamSet(&ibcconnectiontypes.Params{})
-	app.ParamsKeeper.Subspace(ibcexported.ModuleName).WithKeyTable(keyTable)
-	app.ParamsKeeper.Subspace(ibctransfertypes.ModuleName).WithKeyTable(ibctransfertypes.ParamKeyTable())
-	app.ParamsKeeper.Subspace(icacontrollertypes.SubModuleName).WithKeyTable(icacontrollertypes.ParamKeyTable())
-	app.ParamsKeeper.Subspace(icahosttypes.SubModuleName).WithKeyTable(icahosttypes.ParamKeyTable())
-
-	govModuleAddr, _ := app.AuthKeeper.AddressCodec().BytesToString(authtypes.NewModuleAddress(govtypes.ModuleName))
-
-	// Create IBC keeper
-	app.IBCKeeper = ibckeeper.NewKeeper(
-		app.appCodec,
-		runtime.NewKVStoreService(app.GetKey(ibcexported.StoreKey)),
-		app.GetSubspace(ibcexported.ModuleName),
-		app.UpgradeKeeper,
-		govModuleAddr,
-	)
-
-	// Create IBC transfer keeper
-	app.TransferKeeper = ibctransferkeeper.NewKeeper(
-		app.appCodec,
-		runtime.NewKVStoreService(app.GetKey(ibctransfertypes.StoreKey)),
-		app.GetSubspace(ibctransfertypes.ModuleName),
-		app.IBCKeeper.ChannelKeeper,
-		app.IBCKeeper.ChannelKeeper,
-		app.MsgServiceRouter(),
-		app.AuthKeeper,
-		app.BankKeeper,
-		govModuleAddr,
-	)
-
-	// Create interchain account keepers
+	// ICA Host keeper — subspace param retained as nil (legacy; ibc-go v10.3 passes nil).
 	app.ICAHostKeeper = icahostkeeper.NewKeeper(
 		app.appCodec,
-		runtime.NewKVStoreService(app.GetKey(icahosttypes.StoreKey)),
-		app.GetSubspace(icahosttypes.SubModuleName),
+		runtime.NewKVStoreService(app.keys[icahosttypes.StoreKey]),
+		nil, // legacySubspace
 		app.IBCKeeper.ChannelKeeper, // ICS4Wrapper
-		app.IBCKeeper.ChannelKeeper,
-		app.AuthKeeper,
+		app.IBCKeeper.ChannelKeeper, // ChannelKeeper
+		app.AccountKeeper,
 		app.MsgServiceRouter(),
 		app.GRPCQueryRouter(),
-		govModuleAddr,
+		authAddr,
 	)
 
+	// ICA Controller keeper — subspace param retained as nil (legacy).
 	app.ICAControllerKeeper = icacontrollerkeeper.NewKeeper(
 		app.appCodec,
-		runtime.NewKVStoreService(app.GetKey(icacontrollertypes.StoreKey)),
-		app.GetSubspace(icacontrollertypes.SubModuleName),
-		app.IBCKeeper.ChannelKeeper,
-		app.IBCKeeper.ChannelKeeper,
+		runtime.NewKVStoreService(app.keys[icacontrollertypes.StoreKey]),
+		nil, // legacySubspace
+		app.IBCKeeper.ChannelKeeper, // ICS4Wrapper
+		app.IBCKeeper.ChannelKeeper, // ChannelKeeper
 		app.MsgServiceRouter(),
-		govModuleAddr,
+		authAddr,
 	)
 
-	// create IBC module from bottom to top of stack
-	var (
-		transferStack      porttypes.IBCModule = ibctransfer.NewIBCModule(app.TransferKeeper)
-		transferStackV2    ibcapi.IBCModule    = ibctransferv2.NewIBCModule(app.TransferKeeper)
-		icaControllerStack porttypes.IBCModule = icacontroller.NewIBCMiddleware(app.ICAControllerKeeper)
-		icaHostStack       porttypes.IBCModule = icahost.NewIBCModule(app.ICAHostKeeper)
+	// IBC Transfer keeper (cosmos/evm version — includes Erc20Keeper for ERC-20 IBC transfers).
+	// Must be instantiated AFTER Erc20Keeper, since Erc20Keeper holds a pointer to TransferKeeper
+	// that is wired at Erc20Keeper construction time.
+	app.TransferKeeper = transferkeeper.NewKeeper(
+		app.appCodec,
+		runtime.NewKVStoreService(app.keys[ibctransfertypes.StoreKey]),
+		app.IBCKeeper.ChannelKeeper, // ICS4Wrapper
+		app.IBCKeeper.ChannelKeeper, // ChannelKeeper
+		app.MsgServiceRouter(),
+		app.AccountKeeper,
+		app.BankKeeper,
+		app.Erc20Keeper,
+		authAddr,
+	)
+	// Use EVM-aware address codec so hex and bech32 addresses are both accepted.
+	app.TransferKeeper.SetAddressCodec(evmaddress.NewEvmCodec(sdk.GetConfig().GetBech32AccountAddrPrefix()))
+
+	/*
+		IBC Transfer Stack (v1)
+
+		The stack is assembled bottom-to-top. Packets flow top-down on receive and
+		bottom-up on send:
+
+		  Send:    transfer.SendPacket → erc20.SendPacket → callbacks.SendPacket → channel
+		  Receive: channel → callbacks.OnRecvPacket → erc20.OnRecvPacket → transfer.OnRecvPacket
+	*/
+
+	// Bottom of stack: core ICS-20 transfer module (cosmos/evm version).
+	var transferStack porttypes.IBCModule
+	transferStack = transfer.NewIBCModule(app.TransferKeeper)
+
+	// ERC-20 middleware — intercepts transfers and converts ICS-20 coins ↔ ERC-20 tokens.
+	transferStack = erc20.NewIBCMiddleware(app.Erc20Keeper, transferStack)
+
+	// IBC Callbacks middleware — calls EVM contracts on packet lifecycle events.
+	callbackKeeper := ibccallbackskeeper.NewKeeper(
+		app.AccountKeeper,
+		app.EVMKeeper,
+		app.Erc20Keeper,
+	)
+	transferStack = ibccallbacks.NewIBCMiddleware(
+		transferStack,
+		app.IBCKeeper.ChannelKeeper,
+		callbackKeeper,
+		1_000_000,
 	)
 
-	// create IBC v1 router, add transfer route, then set it on the keeper
+	// Rebind TransferKeeper's ICS4Wrapper to the top of the assembled middleware stack.
+	// Without this, keeper-originated sends (e.g. MsgTransfer) would bypass the ERC-20 and
+	// callbacks middleware and go directly to ChannelKeeper, which was the initial ICS4Wrapper.
+	ics4Wrapper, ok := transferStack.(porttypes.ICS4Wrapper)
+	if !ok {
+		panic("transfer middleware stack does not implement porttypes.ICS4Wrapper")
+	}
+	app.TransferKeeper.WithICS4Wrapper(ics4Wrapper)
+
+	// IBC Transfer Stack (v2 — IBC Eureka protocol).
+	var transferStackV2 ibcapi.IBCModule
+	transferStackV2 = transferv2.NewIBCModule(app.TransferKeeper)
+	transferStackV2 = erc20v2.NewIBCMiddleware(transferStackV2, app.Erc20Keeper)
+
+	// ICA stacks.
+	icaControllerStack := icacontroller.NewIBCMiddleware(app.ICAControllerKeeper)
+	icaHostStack := icahost.NewIBCModule(app.ICAHostKeeper)
+
+	// IBC v1 router.
 	ibcRouter := porttypes.NewRouter().
 		AddRoute(ibctransfertypes.ModuleName, transferStack).
 		AddRoute(icacontrollertypes.SubModuleName, icaControllerStack).
 		AddRoute(icahosttypes.SubModuleName, icaHostStack)
+	app.IBCKeeper.SetRouter(ibcRouter)
 
-	// create IBC v2 router, add transfer route, then set it on the keeper
+	// IBC v2 router (Eureka).
 	ibcv2Router := ibcapi.NewRouter().
 		AddRoute(ibctransfertypes.PortID, transferStackV2)
-
-	// this line is used by starport scaffolding # ibc/app/module
-
-	app.IBCKeeper.SetRouter(ibcRouter)
 	app.IBCKeeper.SetRouterV2(ibcv2Router)
-
-	clientKeeper := app.IBCKeeper.ClientKeeper
-	storeProvider := clientKeeper.GetStoreProvider()
-
-	tmLightClientModule := ibctm.NewLightClientModule(app.appCodec, storeProvider)
-	clientKeeper.AddRoute(ibctm.ModuleName, &tmLightClientModule)
-
-	soloLightClientModule := solomachine.NewLightClientModule(app.appCodec, storeProvider)
-	clientKeeper.AddRoute(solomachine.ModuleName, &soloLightClientModule)
-
-	// register IBC modules
-	if err := app.RegisterModules(
-		ibc.NewAppModule(app.IBCKeeper),
-		ibctransfer.NewAppModule(app.TransferKeeper),
-		icamodule.NewAppModule(&app.ICAControllerKeeper, &app.ICAHostKeeper),
-		ibctm.NewAppModule(tmLightClientModule),
-		solomachine.NewAppModule(soloLightClientModule),
-	); err != nil {
-		return err
-	}
 
 	return nil
 }
 
-// RegisterIBC Since the IBC modules don't support dependency injection,
-// we need to manually register the modules on the client side.
-// This needs to be removed after IBC supports App Wiring.
+// RegisterIBC registers IBC modules for use on the client side (e.g. autocli, interface registry).
+// Since IBC modules don't support dependency injection, they must be registered manually.
+//
+// Deprecated: this helper is used by the legacy depinject-based CLI bootstrapping (root.go).
+// It will be removed when root.go is rewritten to use the temp-app approach.
 func RegisterIBC(cdc codec.Codec) map[string]appmodule.AppModule {
 	modules := map[string]appmodule.AppModule{
-		ibcexported.ModuleName:      ibc.NewAppModule(&ibckeeper.Keeper{}),
-		ibctransfertypes.ModuleName: ibctransfer.NewAppModule(ibctransferkeeper.Keeper{}),
+		ibcexported.ModuleName: ibc.NewAppModule(&ibckeeper.Keeper{}),
+		// Use cosmos/evm's transfer module for full ERC-20 support.
+		ibctransfertypes.ModuleName: transfer.NewAppModule(transferkeeper.Keeper{}),
 		icatypes.ModuleName:         icamodule.NewAppModule(&icacontrollerkeeper.Keeper{}, &icahostkeeper.Keeper{}),
 		ibctm.ModuleName:            ibctm.NewAppModule(ibctm.NewLightClientModule(cdc, ibcclienttypes.StoreProvider{})),
-		solomachine.ModuleName:      solomachine.NewAppModule(solomachine.NewLightClientModule(cdc, ibcclienttypes.StoreProvider{})),
 	}
 
 	for _, m := range modules {
