@@ -20,31 +20,26 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: write
-    
+
     steps:
     - name: Checkout code
       uses: actions/checkout@v4
       with:
         fetch-depth: 0  # Fetch all history for git describe
 
-    - name: Set up Go
-      uses: actions/setup-go@v5
-      with:
-        go-version-file: go.mod
-        cache: true
-
-    - name: Install dependencies
-      run: |
-        go mod download
-        go mod verify
-
-    - name: Build Linux binary
+    - name: Build static binary via Docker
       env:
         VERSION: ${{ github.event.inputs.version || '2.0.0' }}
-        CGO_ENABLED: 1
       run: |
-        make build-linux VERSION=$VERSION
+        docker build --build-arg VERSION="$VERSION" -t gnodid-build .
+        mkdir -p build
+        cid=$(docker create gnodid-build)
+        docker cp "$cid":/usr/bin/gnodid build/gnodid-linux
+        docker rm "$cid"
         ls -la build/
+        file build/gnodid-linux
+        echo "Verifying static linking..."
+        file build/gnodid-linux | grep -q "statically linked"
 
     - name: Upload binary artifact
       uses: actions/upload-artifact@v4
@@ -66,7 +61,7 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: write
-    
+
     steps:
     - name: Checkout code
       uses: actions/checkout@v4
@@ -87,22 +82,22 @@ jobs:
         target_commitish: ${{ github.sha }}
         body: |
           ## v${{ github.event.inputs.version || '2.0.0' }}
-          
+
           ### Downloads
           - **Linux (x86_64)**: `gnodid-linux`
-          
+
           ### Installation
           ```bash
           # Download and make executable
           chmod +x gnodid-linux
-          
+
           # Move to your PATH
           sudo mv gnodid-linux /usr/local/bin/gnodid
           ```
-          
+
           ### Version Info
           Built with Go 1.24
         draft: false
         prerelease: ${{ github.event.inputs.prerelease == 'true' }}
         files: build/gnodid-linux
-        token: ${{ secrets.GITHUB_TOKEN }} 
+        token: ${{ secrets.GITHUB_TOKEN }}
