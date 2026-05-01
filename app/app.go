@@ -23,6 +23,7 @@ import (
 	clienthelpers "cosmossdk.io/client/v2/helpers"
 	"cosmossdk.io/core/appmodule"
 	"cosmossdk.io/log"
+	sdkmath "cosmossdk.io/math"
 	storetypes "cosmossdk.io/store/types"
 	"cosmossdk.io/x/evidence"
 	evidencekeeper "cosmossdk.io/x/evidence/keeper"
@@ -811,6 +812,20 @@ func (app *App) Name() string { return app.BaseApp.Name() }
 
 // BeginBlocker runs the begin-block logic for every block.
 func (app *App) BeginBlocker(ctx sdk.Context) (sdk.BeginBlock, error) {
+	// Emergency hotfix: MinGasPrice was incorrectly set to 1_000_000_000 (1 Gwei
+	// in 18-decimal Wei units) during the evm-upgrade handler. The
+	// MinGasPriceDecorator applies this value directly in uGNOD to Cosmos txs
+	// without 18-decimal conversion, making all Cosmos transactions require
+	// ~1 billion uGNOD per gas unit. This one-time patch resets it to zero.
+	// Zero is correct for Cosmos txs; EVM tx fees are enforced separately via
+	// CheckGlobalFee when a non-zero BaseFee is set.
+	feeMarketParams := app.FeeMarketKeeper.GetParams(ctx)
+	if feeMarketParams.MinGasPrice.Equal(sdkmath.LegacyNewDec(1_000_000_000)) {
+		feeMarketParams.MinGasPrice = sdkmath.LegacyZeroDec()
+		if err := app.FeeMarketKeeper.SetParams(ctx, feeMarketParams); err != nil {
+			panic(fmt.Sprintf("failed to apply MinGasPrice hotfix: %v", err))
+		}
+	}
 	return app.ModuleManager.BeginBlock(ctx)
 }
 

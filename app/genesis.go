@@ -61,15 +61,14 @@ func NewErc20GenesisState() *erc20types.GenesisState {
 // prices remain stable and predictable. BaseFee is explicitly zeroed since it is
 // not enforced when NoBaseFee=true.
 //
-// MinGasPrice is set to 1 Gwei (1_000_000_000 in 18-decimal Wei units) to establish
-// a consensus-level minimum fee floor for all EVM transactions. This is the value
-// enforced by CheckGlobalFee in the EVM ante handler and is the natural floor that
-// MetaMask and other EVM wallets already target. Without this, CheckGlobalFee
-// short-circuits on zero and EVM txs can be submitted fee-free.
+// MinGasPrice is set to zero. On a 6-decimal chain (uGNOD), the MinGasPrice param
+// is applied directly in uGNOD/gas by MinGasPriceDecorator with no 18-decimal
+// conversion, so any non-zero value causes Cosmos txs to require enormous fees.
+// EVM-specific fee enforcement is handled by a custom ante decorator.
 func NewFeeMarketGenesisState() *feemarkettypes.GenesisState {
 	feeMarketGenState := feemarkettypes.DefaultGenesisState()
 	feeMarketGenState.Params.NoBaseFee = true
 	feeMarketGenState.Params.BaseFee = sdkmath.LegacyZeroDec()
-	feeMarketGenState.Params.MinGasPrice = sdkmath.LegacyNewDec(1_000_000_000)
+	feeMarketGenState.Params.MinGasPrice = sdkmath.LegacyZeroDec()
 	return feeMarketGenState
 }

@@ -81,13 +81,13 @@ func (app *App) RegisterUpgradeHandlers() {
 			feeMarketMod.InitGenesis(sdkCtx, cdc, cdc.MustMarshalJSON(NewFeeMarketGenesisState()))
 			fromVM[feemarkettypes.ModuleName] = 1
 
-			// 2b. Set MinGasPrice = 1 Gwei on the feemarket params.
-			// NewFeeMarketGenesisState() already includes MinGasPrice=1Gwei, but we
-			// explicitly set it here via the keeper so the value is persisted in state
-			// independently of InitGenesis ordering. This also makes the intent clear
-			// for future upgrades.
+			// 2b. Ensure MinGasPrice = 0 on the feemarket params.
+			// MinGasPrice is applied directly in uGNOD/gas to Cosmos txs by
+			// MinGasPriceDecorator with no 18-decimal conversion. Any non-zero
+			// value would require enormous fees for Cosmos transactions. EVM-specific
+			// fee enforcement is handled by a custom ante decorator instead.
 			feeMarketParams := app.FeeMarketKeeper.GetParams(sdkCtx)
-			feeMarketParams.MinGasPrice = sdkmath.LegacyNewDec(1_000_000_000)
+			feeMarketParams.MinGasPrice = sdkmath.LegacyZeroDec()
 			if err := app.FeeMarketKeeper.SetParams(sdkCtx, feeMarketParams); err != nil {
 				return nil, err
 			}
