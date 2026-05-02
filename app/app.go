@@ -810,17 +810,18 @@ func (app *App) RegisterPendingTxListener(listener func(common.Hash)) {
 // Name returns the name of the App.
 func (app *App) Name() string { return app.BaseApp.Name() }
 
+// MinGasPriceHotfixHeight is the block height at which the MinGasPrice emergency
+// hotfix is applied. MinGasPrice was incorrectly set to 1_000_000_000 during the
+// evm-upgrade handler. MinGasPriceDecorator applies this value directly in uGNOD/gas
+// to Cosmos txs without 18-decimal conversion, requiring ~1 billion uGNOD per gas.
+// At this height all validators on v2.0.2 apply the fix simultaneously, ensuring
+// consensus is maintained. All validators must upgrade before this height.
+const MinGasPriceHotfixHeight = int64(340100)
+
 // BeginBlocker runs the begin-block logic for every block.
 func (app *App) BeginBlocker(ctx sdk.Context) (sdk.BeginBlock, error) {
-	// Emergency hotfix: MinGasPrice was incorrectly set to 1_000_000_000 (1 Gwei
-	// in 18-decimal Wei units) during the evm-upgrade handler. The
-	// MinGasPriceDecorator applies this value directly in uGNOD to Cosmos txs
-	// without 18-decimal conversion, making all Cosmos transactions require
-	// ~1 billion uGNOD per gas unit. This one-time patch resets it to zero.
-	// Zero is correct for Cosmos txs; EVM tx fees are enforced separately via
-	// CheckGlobalFee when a non-zero BaseFee is set.
-	feeMarketParams := app.FeeMarketKeeper.GetParams(ctx)
-	if feeMarketParams.MinGasPrice.Equal(sdkmath.LegacyNewDec(1_000_000_000)) {
+	if ctx.BlockHeight() == MinGasPriceHotfixHeight {
+		feeMarketParams := app.FeeMarketKeeper.GetParams(ctx)
 		feeMarketParams.MinGasPrice = sdkmath.LegacyZeroDec()
 		if err := app.FeeMarketKeeper.SetParams(ctx, feeMarketParams); err != nil {
 			panic(fmt.Sprintf("failed to apply MinGasPrice hotfix: %v", err))
