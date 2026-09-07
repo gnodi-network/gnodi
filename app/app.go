@@ -8,9 +8,9 @@ import (
 	"os"
 
 	// Force-load the EVM tracer engines to trigger registration
+	"github.com/ethereum/go-ethereum/common"
 	_ "github.com/ethereum/go-ethereum/eth/tracers/js"
 	_ "github.com/ethereum/go-ethereum/eth/tracers/native"
-	"github.com/ethereum/go-ethereum/common"
 
 	"github.com/spf13/cast"
 
@@ -25,21 +25,21 @@ import (
 	"cosmossdk.io/log"
 	sdkmath "cosmossdk.io/math"
 	storetypes "cosmossdk.io/store/types"
+	circuitmodule "cosmossdk.io/x/circuit"
+	circuitkeeper "cosmossdk.io/x/circuit/keeper"
+	circuittypes "cosmossdk.io/x/circuit/types"
 	"cosmossdk.io/x/evidence"
 	evidencekeeper "cosmossdk.io/x/evidence/keeper"
 	evidencetypes "cosmossdk.io/x/evidence/types"
 	"cosmossdk.io/x/feegrant"
 	feegrantkeeper "cosmossdk.io/x/feegrant/keeper"
 	feegrantmodule "cosmossdk.io/x/feegrant/module"
-	"cosmossdk.io/x/upgrade"
-	upgradekeeper "cosmossdk.io/x/upgrade/keeper"
-	upgradetypes "cosmossdk.io/x/upgrade/types"
-	circuitkeeper "cosmossdk.io/x/circuit/keeper"
-	circuittypes "cosmossdk.io/x/circuit/types"
-	circuitmodule "cosmossdk.io/x/circuit"
 	"cosmossdk.io/x/nft"
 	nftkeeper "cosmossdk.io/x/nft/keeper"
 	nftmodule "cosmossdk.io/x/nft/module"
+	"cosmossdk.io/x/upgrade"
+	upgradekeeper "cosmossdk.io/x/upgrade/keeper"
+	upgradetypes "cosmossdk.io/x/upgrade/types"
 
 	"github.com/cosmos/cosmos-sdk/baseapp"
 	"github.com/cosmos/cosmos-sdk/client"
@@ -119,8 +119,6 @@ import (
 	"github.com/cosmos/evm/x/feemarket"
 	feemarketkeeper "github.com/cosmos/evm/x/feemarket/keeper"
 	feemarkettypes "github.com/cosmos/evm/x/feemarket/types"
-	evmibctransfer "github.com/cosmos/evm/x/ibc/transfer"
-	transferkeeper "github.com/cosmos/evm/x/ibc/transfer/keeper"
 	"github.com/cosmos/evm/x/precisebank"
 	precisebankkeeper "github.com/cosmos/evm/x/precisebank/keeper"
 	precisebanktypes "github.com/cosmos/evm/x/precisebank/types"
@@ -129,22 +127,23 @@ import (
 	evmtypes "github.com/cosmos/evm/x/vm/types"
 
 	// IBC
-	ibctransfer "github.com/cosmos/ibc-go/v10/modules/apps/transfer"
-	ibctransfertypes "github.com/cosmos/ibc-go/v10/modules/apps/transfer/types"
 	icamodule "github.com/cosmos/ibc-go/v10/modules/apps/27-interchain-accounts"
 	icacontrollerkeeper "github.com/cosmos/ibc-go/v10/modules/apps/27-interchain-accounts/controller/keeper"
 	icacontrollertypes "github.com/cosmos/ibc-go/v10/modules/apps/27-interchain-accounts/controller/types"
 	icahostkeeper "github.com/cosmos/ibc-go/v10/modules/apps/27-interchain-accounts/host/keeper"
 	icahosttypes "github.com/cosmos/ibc-go/v10/modules/apps/27-interchain-accounts/host/types"
 	icatypes "github.com/cosmos/ibc-go/v10/modules/apps/27-interchain-accounts/types"
+	ibctransfer "github.com/cosmos/ibc-go/v10/modules/apps/transfer"
+	transferkeeper "github.com/cosmos/ibc-go/v10/modules/apps/transfer/keeper"
+	ibctransfertypes "github.com/cosmos/ibc-go/v10/modules/apps/transfer/types"
 	ibc "github.com/cosmos/ibc-go/v10/modules/core"
 	ibcexported "github.com/cosmos/ibc-go/v10/modules/core/exported"
 	ibckeeper "github.com/cosmos/ibc-go/v10/modules/core/keeper"
 	ibctm "github.com/cosmos/ibc-go/v10/modules/light-clients/07-tendermint"
 
 	// Gnodi custom module
-	distromodule "github.com/gnodi-network/gnodi/x/distro/module"
 	distromodulekeeper "github.com/gnodi-network/gnodi/x/distro/keeper"
+	distromodule "github.com/gnodi-network/gnodi/x/distro/module"
 	distromoduletypes "github.com/gnodi-network/gnodi/x/distro/types"
 
 	"github.com/gnodi-network/gnodi/docs"
@@ -168,16 +167,16 @@ var _ cosmosevmserver.Application = (*App)(nil)
 
 // maccPerms defines module account permissions.
 var maccPerms = map[string][]string{
-	authtypes.FeeCollectorName:            nil,
-	distrtypes.ModuleName:                nil,
-	minttypes.ModuleName:                 {authtypes.Minter},
-	stakingtypes.BondedPoolName:          {authtypes.Burner, authtypes.Staking},
-	stakingtypes.NotBondedPoolName:       {authtypes.Burner, authtypes.Staking},
-	govtypes.ModuleName:                  {authtypes.Burner},
-	nft.ModuleName:                       nil,
-	ibctransfertypes.ModuleName:          {authtypes.Minter, authtypes.Burner},
-	icatypes.ModuleName:                  nil,
-	distromoduletypes.ModuleName:         {authtypes.Minter, authtypes.Burner, authtypes.Staking},
+	authtypes.FeeCollectorName:     nil,
+	distrtypes.ModuleName:          nil,
+	minttypes.ModuleName:           {authtypes.Minter},
+	stakingtypes.BondedPoolName:    {authtypes.Burner, authtypes.Staking},
+	stakingtypes.NotBondedPoolName: {authtypes.Burner, authtypes.Staking},
+	govtypes.ModuleName:            {authtypes.Burner},
+	nft.ModuleName:                 nil,
+	ibctransfertypes.ModuleName:    {authtypes.Minter, authtypes.Burner},
+	icatypes.ModuleName:            nil,
+	distromoduletypes.ModuleName:   {authtypes.Minter, authtypes.Burner, authtypes.Staking},
 	// Cosmos EVM modules
 	evmtypes.ModuleName:         {authtypes.Minter, authtypes.Burner},
 	feemarkettypes.ModuleName:   nil,
@@ -610,7 +609,7 @@ func New(
 	tmLightClientModule := ibctm.NewLightClientModule(appCodec, storeProvider)
 	app.IBCKeeper.ClientKeeper.AddRoute(ibctm.ModuleName, &tmLightClientModule)
 
-	transferModule := evmibctransfer.NewAppModule(app.TransferKeeper)
+	transferModule := ibctransfer.NewAppModule(app.TransferKeeper)
 
 	app.ModuleManager = module.NewManager(
 		genutil.NewAppModule(app.AccountKeeper, app.StakingKeeper, app, app.txConfig),
@@ -651,7 +650,7 @@ func New(
 		map[string]module.AppModuleBasic{
 			genutiltypes.ModuleName:     genutil.NewAppModuleBasic(genutiltypes.DefaultMessageValidator),
 			govtypes.ModuleName:         gov.NewAppModuleBasic(nil),
-			ibctransfertypes.ModuleName: evmibctransfer.AppModuleBasic{AppModuleBasic: &ibctransfer.AppModuleBasic{}},
+			ibctransfertypes.ModuleName: ibctransfer.AppModuleBasic{},
 		},
 	)
 	app.BasicModuleManager.RegisterLegacyAminoCodec(legacyAmino)
@@ -818,6 +817,74 @@ func (app *App) Name() string { return app.BaseApp.Name() }
 // consensus is maintained. All validators must upgrade before this height.
 const MinGasPriceHotfixHeight = int64(340100)
 
+// SecurityBurnHeight is the first block produced after the coordinated restart
+// following the 2026-08-25 incident. At this height the balances minted by the
+// exploit at block 670423 are burned.
+//
+// Root cause: unchecked uint256 overflow in x/vm/statedb AddBalance, fixed
+// upstream in cosmos/evm v0.6.3 / v0.7.3.
+// Advisory: https://github.com/cosmos/evm/security/advisories/GHSA-367m-g444-9mg3
+//
+// This runs exactly once, at one height, and is identical on every node, so the
+// resulting state transition is deterministic and consensus-safe.
+const SecurityBurnHeight = int64(670553)
+
+// securityBurnAccounts are the addresses that received exploit-minted funds.
+// Their entire bank balance is burned at SecurityBurnHeight.
+//
+// x/precisebank state is deliberately NOT touched. The minter retains a
+// fractional balance of 913129639936 aGNOD (0.913 uGNOD, worthless), and
+// rewriting it would require rebalancing the module remainder and risk breaking
+// the precisebank invariant (sum of fractional balances + remainder must stay a
+// multiple of 10^12).
+var securityBurnAccounts = []string{
+	"gnodi18kmwswajr0khc2xuxy7s7mnljnsscd6x25s98x", // minter (exploit tx, h670423)
+	"gnodi1drflazqqvadznpgaz5q4ypx8rm9gevhv7u645k", // 1st hop (h670460)
+	"gnodi1l9w2uje6z6gf23el4589sy55fkrp0ljxsq8vyl", // 2nd hop / IBC sender
+}
+
+// applySecurityBurn removes exploit-minted funds from circulation.
+//
+// Balances are moved to the x/vm module account (which holds Burner permission)
+// and burned there, so x/bank's total supply is decremented correctly.
+//
+// The channel-0 IBC escrow is intentionally left untouched: it still backs the
+// GNOD vouchers held on Osmosis, and reducing it would leave those unbacked.
+func (app *App) applySecurityBurn(ctx sdk.Context) error {
+	burned := sdk.NewCoins()
+
+	for _, bech32 := range securityBurnAccounts {
+		addr, err := sdk.AccAddressFromBech32(bech32)
+		if err != nil {
+			return fmt.Errorf("security burn: bad address %s: %w", bech32, err)
+		}
+
+		balances := app.BankKeeper.GetAllBalances(ctx, addr)
+		if balances.IsZero() {
+			continue
+		}
+
+		if err := app.BankKeeper.SendCoinsFromAccountToModule(
+			ctx, addr, evmtypes.ModuleName, balances,
+		); err != nil {
+			return fmt.Errorf("security burn: collect from %s: %w", bech32, err)
+		}
+		if err := app.BankKeeper.BurnCoins(
+			ctx, evmtypes.ModuleName, balances,
+		); err != nil {
+			return fmt.Errorf("security burn: burn from %s: %w", bech32, err)
+		}
+
+		burned = burned.Add(balances...)
+		ctx.Logger().Info("security burn: account cleared",
+			"address", bech32, "amount", balances.String())
+	}
+
+	ctx.Logger().Info("security burn: complete",
+		"height", ctx.BlockHeight(), "total_burned", burned.String())
+	return nil
+}
+
 // BeginBlocker runs the begin-block logic for every block.
 func (app *App) BeginBlocker(ctx sdk.Context) (sdk.BeginBlock, error) {
 	if ctx.BlockHeight() == MinGasPriceHotfixHeight {
@@ -827,6 +894,13 @@ func (app *App) BeginBlocker(ctx sdk.Context) (sdk.BeginBlock, error) {
 			panic(fmt.Sprintf("failed to apply MinGasPrice hotfix: %v", err))
 		}
 	}
+
+	if ctx.BlockHeight() == SecurityBurnHeight {
+		if err := app.applySecurityBurn(ctx); err != nil {
+			panic(fmt.Sprintf("failed to apply security burn: %v", err))
+		}
+	}
+
 	return app.ModuleManager.BeginBlock(ctx)
 }
 
@@ -986,26 +1060,26 @@ func (app *App) SetClientCtx(clientCtx client.Context) {
 
 // ── cosmosevmserver.Application getter methods ──────────────────────────────
 
-func (app *App) GetEVMKeeper() *evmkeeper.Keeper                      { return app.EVMKeeper }
-func (app *App) GetErc20Keeper() *erc20keeper.Keeper                   { return &app.Erc20Keeper }
-func (app *App) GetFeeMarketKeeper() *feemarketkeeper.Keeper           { return &app.FeeMarketKeeper }
-func (app *App) GetPreciseBankKeeper() *precisebankkeeper.Keeper       { return &app.PreciseBankKeeper }
-func (app *App) GetAccountKeeper() authkeeper.AccountKeeper            { return app.AccountKeeper }
-func (app *App) GetBankKeeper() bankkeeper.Keeper                      { return app.BankKeeper }
-func (app *App) GetStakingKeeper() *stakingkeeper.Keeper               { return app.StakingKeeper }
-func (app *App) GetDistrKeeper() distrkeeper.Keeper                    { return app.DistrKeeper }
-func (app *App) GetGovKeeper() govkeeper.Keeper                        { return app.GovKeeper }
-func (app *App) GetSlashingKeeper() slashingkeeper.Keeper              { return app.SlashingKeeper }
-func (app *App) GetMintKeeper() mintkeeper.Keeper                      { return app.MintKeeper }
-func (app *App) GetFeeGrantKeeper() feegrantkeeper.Keeper              { return app.FeeGrantKeeper }
-func (app *App) GetAuthzKeeper() authzkeeper.Keeper                    { return app.AuthzKeeper }
-func (app *App) GetEvidenceKeeper() *evidencekeeper.Keeper             { return &app.EvidenceKeeper }
-func (app *App) GetConsensusParamsKeeper() consensuskeeper.Keeper      { return app.ConsensusParamsKeeper }
-func (app *App) GetIBCKeeper() *ibckeeper.Keeper                      { return app.IBCKeeper }
-func (app *App) GetTransferKeeper() transferkeeper.Keeper              { return app.TransferKeeper }
+func (app *App) GetEVMKeeper() *evmkeeper.Keeper                  { return app.EVMKeeper }
+func (app *App) GetErc20Keeper() *erc20keeper.Keeper              { return &app.Erc20Keeper }
+func (app *App) GetFeeMarketKeeper() *feemarketkeeper.Keeper      { return &app.FeeMarketKeeper }
+func (app *App) GetPreciseBankKeeper() *precisebankkeeper.Keeper  { return &app.PreciseBankKeeper }
+func (app *App) GetAccountKeeper() authkeeper.AccountKeeper       { return app.AccountKeeper }
+func (app *App) GetBankKeeper() bankkeeper.Keeper                 { return app.BankKeeper }
+func (app *App) GetStakingKeeper() *stakingkeeper.Keeper          { return app.StakingKeeper }
+func (app *App) GetDistrKeeper() distrkeeper.Keeper               { return app.DistrKeeper }
+func (app *App) GetGovKeeper() govkeeper.Keeper                   { return app.GovKeeper }
+func (app *App) GetSlashingKeeper() slashingkeeper.Keeper         { return app.SlashingKeeper }
+func (app *App) GetMintKeeper() mintkeeper.Keeper                 { return app.MintKeeper }
+func (app *App) GetFeeGrantKeeper() feegrantkeeper.Keeper         { return app.FeeGrantKeeper }
+func (app *App) GetAuthzKeeper() authzkeeper.Keeper               { return app.AuthzKeeper }
+func (app *App) GetEvidenceKeeper() *evidencekeeper.Keeper        { return &app.EvidenceKeeper }
+func (app *App) GetConsensusParamsKeeper() consensuskeeper.Keeper { return app.ConsensusParamsKeeper }
+func (app *App) GetIBCKeeper() *ibckeeper.Keeper                  { return app.IBCKeeper }
+func (app *App) GetTransferKeeper() transferkeeper.Keeper         { return app.TransferKeeper }
 
-func (app *App) SetErc20Keeper(k erc20keeper.Keeper)         { app.Erc20Keeper = k }
-func (app *App) SetTransferKeeper(k transferkeeper.Keeper)   { app.TransferKeeper = k }
+func (app *App) SetErc20Keeper(k erc20keeper.Keeper)       { app.Erc20Keeper = k }
+func (app *App) SetTransferKeeper(k transferkeeper.Keeper) { app.TransferKeeper = k }
 
 // Close shuts down the EVM mempool and underlying BaseApp.
 func (app *App) Close() error {
