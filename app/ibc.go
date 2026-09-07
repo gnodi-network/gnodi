@@ -13,11 +13,7 @@ import (
 	"github.com/cosmos/evm/x/erc20"
 	erc20v2 "github.com/cosmos/evm/x/erc20/v2"
 	ibccallbackskeeper "github.com/cosmos/evm/x/ibc/callbacks/keeper"
-	"github.com/cosmos/evm/x/ibc/transfer"
-	transferkeeper "github.com/cosmos/evm/x/ibc/transfer/keeper"
-	transferv2 "github.com/cosmos/evm/x/ibc/transfer/v2"
 
-	ibccallbacks "github.com/cosmos/ibc-go/v10/modules/apps/callbacks"
 	icamodule "github.com/cosmos/ibc-go/v10/modules/apps/27-interchain-accounts"
 	icacontroller "github.com/cosmos/ibc-go/v10/modules/apps/27-interchain-accounts/controller"
 	icacontrollerkeeper "github.com/cosmos/ibc-go/v10/modules/apps/27-interchain-accounts/controller/keeper"
@@ -26,7 +22,11 @@ import (
 	icahostkeeper "github.com/cosmos/ibc-go/v10/modules/apps/27-interchain-accounts/host/keeper"
 	icahosttypes "github.com/cosmos/ibc-go/v10/modules/apps/27-interchain-accounts/host/types"
 	icatypes "github.com/cosmos/ibc-go/v10/modules/apps/27-interchain-accounts/types"
+	ibccallbacks "github.com/cosmos/ibc-go/v10/modules/apps/callbacks"
+	"github.com/cosmos/ibc-go/v10/modules/apps/transfer"
+	transferkeeper "github.com/cosmos/ibc-go/v10/modules/apps/transfer/keeper"
 	ibctransfertypes "github.com/cosmos/ibc-go/v10/modules/apps/transfer/types"
+	transferv2 "github.com/cosmos/ibc-go/v10/modules/apps/transfer/v2"
 	ibc "github.com/cosmos/ibc-go/v10/modules/core"
 	ibcclienttypes "github.com/cosmos/ibc-go/v10/modules/core/02-client/types"
 	porttypes "github.com/cosmos/ibc-go/v10/modules/core/05-port/types"
@@ -36,12 +36,11 @@ import (
 	ibctm "github.com/cosmos/ibc-go/v10/modules/light-clients/07-tendermint"
 )
 
-// registerIBCModules initializes the IBC transfer keeper (cosmos/evm version), ICA host and
+// registerIBCModules initializes the IBC transfer keeper, ICA host and
 // controller keepers, and wires up the IBC routing stack with ERC-20 middleware and IBC callbacks.
 //
-// This must be called AFTER app.Erc20Keeper and app.EVMKeeper are initialized (in New()) because
-// the cosmos/evm TransferKeeper and CallbackKeeper both depend on Erc20Keeper, and
-// the callbacks keeper needs EVMKeeper.
+// This must be called AFTER app.Erc20Keeper and app.EVMKeeper are initialized (in New()),
+// because the ERC-20 middleware and the callbacks keeper both depend on them.
 func (app *App) registerIBCModules() error {
 	authAddr := authtypes.NewModuleAddress(govtypes.ModuleName).String()
 
@@ -49,7 +48,7 @@ func (app *App) registerIBCModules() error {
 	app.ICAHostKeeper = icahostkeeper.NewKeeper(
 		app.appCodec,
 		runtime.NewKVStoreService(app.keys[icahosttypes.StoreKey]),
-		nil, // legacySubspace
+		nil,                         // legacySubspace
 		app.IBCKeeper.ChannelKeeper, // ICS4Wrapper
 		app.IBCKeeper.ChannelKeeper, // ChannelKeeper
 		app.AccountKeeper,
@@ -62,25 +61,27 @@ func (app *App) registerIBCModules() error {
 	app.ICAControllerKeeper = icacontrollerkeeper.NewKeeper(
 		app.appCodec,
 		runtime.NewKVStoreService(app.keys[icacontrollertypes.StoreKey]),
-		nil, // legacySubspace
+		nil,                         // legacySubspace
 		app.IBCKeeper.ChannelKeeper, // ICS4Wrapper
 		app.IBCKeeper.ChannelKeeper, // ChannelKeeper
 		app.MsgServiceRouter(),
 		authAddr,
 	)
 
-	// IBC Transfer keeper (cosmos/evm version — includes Erc20Keeper for ERC-20 IBC transfers).
-	// Must be instantiated AFTER Erc20Keeper, since Erc20Keeper holds a pointer to TransferKeeper
-	// that is wired at Erc20Keeper construction time.
+	// IBC Transfer keeper (official ibc-go implementation).
+	//
+	// cosmos/evm v0.6.0 removed its IBC transfer wrapper: ERC-20 conversion is no longer
+	// performed on the ICS-20 transfer path. ERC-20 transfers must now be initiated through
+	// the ICS20 precompile, which receives Erc20Keeper directly (see WithStaticPrecompiles).
 	app.TransferKeeper = transferkeeper.NewKeeper(
 		app.appCodec,
 		runtime.NewKVStoreService(app.keys[ibctransfertypes.StoreKey]),
+		nil,                         // legacySubspace
 		app.IBCKeeper.ChannelKeeper, // ICS4Wrapper
 		app.IBCKeeper.ChannelKeeper, // ChannelKeeper
 		app.MsgServiceRouter(),
 		app.AccountKeeper,
 		app.BankKeeper,
-		app.Erc20Keeper,
 		authAddr,
 	)
 	// Use EVM-aware address codec so hex and bech32 addresses are both accepted.
@@ -96,7 +97,7 @@ func (app *App) registerIBCModules() error {
 		  Receive: channel → callbacks.OnRecvPacket → erc20.OnRecvPacket → transfer.OnRecvPacket
 	*/
 
-	// Bottom of stack: core ICS-20 transfer module (cosmos/evm version).
+	// Bottom of stack: core ICS-20 transfer module (ibc-go).
 	var transferStack porttypes.IBCModule
 	transferStack = transfer.NewIBCModule(app.TransferKeeper)
 
@@ -156,8 +157,7 @@ func (app *App) registerIBCModules() error {
 // It will be removed when root.go is rewritten to use the temp-app approach.
 func RegisterIBC(cdc codec.Codec) map[string]appmodule.AppModule {
 	modules := map[string]appmodule.AppModule{
-		ibcexported.ModuleName: ibc.NewAppModule(&ibckeeper.Keeper{}),
-		// Use cosmos/evm's transfer module for full ERC-20 support.
+		ibcexported.ModuleName:      ibc.NewAppModule(&ibckeeper.Keeper{}),
 		ibctransfertypes.ModuleName: transfer.NewAppModule(transferkeeper.Keeper{}),
 		icatypes.ModuleName:         icamodule.NewAppModule(&icacontrollerkeeper.Keeper{}, &icahostkeeper.Keeper{}),
 		ibctm.ModuleName:            ibctm.NewAppModule(ibctm.NewLightClientModule(cdc, ibcclienttypes.StoreProvider{})),

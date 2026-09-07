@@ -20,11 +20,18 @@ import (
 type GenesisState map[string]json.RawMessage
 
 // activePrecompiles lists the static precompiles enabled on Gnodi.
-// The ICS20 precompile (0x...0802) is intentionally excluded: cosmos/evm v0.5.1
-// contains GHSA-54gx-3cgr-7mfm, a critical reentrancy vulnerability in the ICS20
-// precompile that was exploited on Saga chain (January 2026). The fix ships in
-// cosmos/evm v0.6.0, which has breaking API changes requiring a separate migration.
-// Until that upgrade is performed, the ICS20 precompile must remain disabled.
+//
+// The ICS20 precompile (0x...0802) remains excluded. It was originally disabled as a
+// stopgap against GHSA-54gx-3cgr-7mfm / ASA-2026-002, the critical ICS20 reentrancy
+// bug in cosmos/evm <v0.6.0 that was exploited on Saga chain (January 2026). That fix
+// is now in place: this chain runs cosmos/evm v0.6.3, so the vulnerability is patched
+// and enabling ICS20 would no longer be unsafe on that account.
+//
+// It is left disabled deliberately rather than by necessity. Note that as of v0.6.0
+// the ICS20 precompile is the ONLY path for ERC-20 IBC transfers — the x/ibc/transfer
+// wrapper that used to convert ERC-20 on the ICS-20 message path was removed upstream.
+// Enabling it is therefore a product decision (it turns on ERC-20 IBC transfers), and
+// on a live chain it is a governance param change, not a genesis edit.
 var activePrecompiles = []string{
 	evmtypes.P256PrecompileAddress,
 	evmtypes.Bech32PrecompileAddress,

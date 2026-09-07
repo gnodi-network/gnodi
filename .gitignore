@@ -8,3 +8,10 @@ release/
 *.log
 *.ign
 /gnodid
+
+# build artifacts
+/build/
+/dist/
+
+# incident response material - kept locally, not published
+/incident/
